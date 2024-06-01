@@ -1,9 +1,5 @@
 <h1 align="center"> Weather Dahsboard | <a href='https://weather-app-drab-eta.vercel.app/'>Visit Here</a></h1>
 
-## Demo
-
-https://user-images.githubusercontent.com/110938199/211221208-c3a977f6-e2cc-43a9-964c-5f1067690798.mov
-
 ## Project Context
 
 A fully responsive Weather Dashboard with Real Time weather insights and autocomplete features for searchbar. 
