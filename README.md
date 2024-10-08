@@ -1,6 +1,6 @@
 # Verve Bridge
 
-<h1 align="center"> Weather Dashboard | </h1>
+<h1 align="center"> | Weather Dashboard | </h1>
 
 ## Project Context
 
