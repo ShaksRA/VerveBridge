@@ -1,6 +1,6 @@
-# Techplement
+# Verve Brodge
 
-<h1 align="center"> Weather Dahsboard | <a href='https://weather-app-drab-eta.vercel.app/'>Visit Here</a></h1>
+<h1 align="center"> Weather Dashboard | <a href='https://weather-app-drab-eta.vercel.app/'>Visit Here</a></h1>
 
 ## Project Context
 
