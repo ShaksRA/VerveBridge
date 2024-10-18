@@ -1,4 +1,4 @@
-# VerveBridge_ContentManagementSystem_Task
+# VerveBridge
 
 # Content Management System (CMS) Backend
 
