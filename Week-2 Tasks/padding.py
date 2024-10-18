@@ -5,200 +5,109 @@
 from __future__ import annotations
 
 import abc
-import typing
 
-from cryptography import utils
-from cryptography.exceptions import AlreadyFinalized
-from cryptography.hazmat.bindings._rust import (
-    PKCS7PaddingContext,
-    check_ansix923_padding,
-    check_pkcs7_padding,
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives._asymmetric import (
+    AsymmetricPadding as AsymmetricPadding,
 )
+from cryptography.hazmat.primitives.asymmetric import rsa
 
 
-class PaddingContext(metaclass=abc.ABCMeta):
-    @abc.abstractmethod
-    def update(self, data: bytes) -> bytes:
-        """
-        Pads the provided bytes and returns any available data as bytes.
-        """
-
-    @abc.abstractmethod
-    def finalize(self) -> bytes:
-        """
-        Finalize the padding, returns bytes.
-        """
+class PKCS1v15(AsymmetricPadding):
+    name = "EMSA-PKCS1-v1_5"
 
 
-def _byte_padding_check(block_size: int) -> None:
-    if not (0 <= block_size <= 2040):
-        raise ValueError("block_size must be in range(0, 2041).")
-
-    if block_size % 8 != 0:
-        raise ValueError("block_size must be a multiple of 8.")
+class _MaxLength:
+    "Sentinel value for `MAX_LENGTH`."
 
 
-def _byte_padding_update(
-    buffer_: bytes | None, data: bytes, block_size: int
-) -> tuple[bytes, bytes]:
-    if buffer_ is None:
-        raise AlreadyFinalized("Context was already finalized.")
-
-    utils._check_byteslike("data", data)
-
-    buffer_ += bytes(data)
-
-    finished_blocks = len(buffer_) // (block_size // 8)
-
-    result = buffer_[: finished_blocks * (block_size // 8)]
-    buffer_ = buffer_[finished_blocks * (block_size // 8) :]
-
-    return buffer_, result
+class _Auto:
+    "Sentinel value for `AUTO`."
 
 
-def _byte_padding_pad(
-    buffer_: bytes | None,
-    block_size: int,
-    paddingfn: typing.Callable[[int], bytes],
-) -> bytes:
-    if buffer_ is None:
-        raise AlreadyFinalized("Context was already finalized.")
-
-    pad_size = block_size // 8 - len(buffer_)
-    return buffer_ + paddingfn(pad_size)
+class _DigestLength:
+    "Sentinel value for `DIGEST_LENGTH`."
 
 
-def _byte_unpadding_update(
-    buffer_: bytes | None, data: bytes, block_size: int
-) -> tuple[bytes, bytes]:
-    if buffer_ is None:
-        raise AlreadyFinalized("Context was already finalized.")
+class PSS(AsymmetricPadding):
+    MAX_LENGTH = _MaxLength()
+    AUTO = _Auto()
+    DIGEST_LENGTH = _DigestLength()
+    name = "EMSA-PSS"
+    _salt_length: int | _MaxLength | _Auto | _DigestLength
 
-    utils._check_byteslike("data", data)
+    def __init__(
+        self,
+        mgf: MGF,
+        salt_length: int | _MaxLength | _Auto | _DigestLength,
+    ) -> None:
+        self._mgf = mgf
 
-    buffer_ += bytes(data)
+        if not isinstance(
+            salt_length, (int, _MaxLength, _Auto, _DigestLength)
+        ):
+            raise TypeError(
+                "salt_length must be an integer, MAX_LENGTH, "
+                "DIGEST_LENGTH, or AUTO"
+            )
 
-    finished_blocks = max(len(buffer_) // (block_size // 8) - 1, 0)
+        if isinstance(salt_length, int) and salt_length < 0:
+            raise ValueError("salt_length must be zero or greater.")
 
-    result = buffer_[: finished_blocks * (block_size // 8)]
-    buffer_ = buffer_[finished_blocks * (block_size // 8) :]
+        self._salt_length = salt_length
 
-    return buffer_, result
-
-
-def _byte_unpadding_check(
-    buffer_: bytes | None,
-    block_size: int,
-    checkfn: typing.Callable[[bytes], int],
-) -> bytes:
-    if buffer_ is None:
-        raise AlreadyFinalized("Context was already finalized.")
-
-    if len(buffer_) != block_size // 8:
-        raise ValueError("Invalid padding bytes.")
-
-    valid = checkfn(buffer_)
-
-    if not valid:
-        raise ValueError("Invalid padding bytes.")
-
-    pad_size = buffer_[-1]
-    return buffer_[:-pad_size]
+    @property
+    def mgf(self) -> MGF:
+        return self._mgf
 
 
-class PKCS7:
-    def __init__(self, block_size: int):
-        _byte_padding_check(block_size)
-        self.block_size = block_size
+class OAEP(AsymmetricPadding):
+    name = "EME-OAEP"
 
-    def padder(self) -> PaddingContext:
-        return PKCS7PaddingContext(self.block_size)
+    def __init__(
+        self,
+        mgf: MGF,
+        algorithm: hashes.HashAlgorithm,
+        label: bytes | None,
+    ):
+        if not isinstance(algorithm, hashes.HashAlgorithm):
+            raise TypeError("Expected instance of hashes.HashAlgorithm.")
 
-    def unpadder(self) -> PaddingContext:
-        return _PKCS7UnpaddingContext(self.block_size)
+        self._mgf = mgf
+        self._algorithm = algorithm
+        self._label = label
 
+    @property
+    def algorithm(self) -> hashes.HashAlgorithm:
+        return self._algorithm
 
-class _PKCS7UnpaddingContext(PaddingContext):
-    _buffer: bytes | None
-
-    def __init__(self, block_size: int):
-        self.block_size = block_size
-        # TODO: more copies than necessary, we should use zero-buffer (#193)
-        self._buffer = b""
-
-    def update(self, data: bytes) -> bytes:
-        self._buffer, result = _byte_unpadding_update(
-            self._buffer, data, self.block_size
-        )
-        return result
-
-    def finalize(self) -> bytes:
-        result = _byte_unpadding_check(
-            self._buffer, self.block_size, check_pkcs7_padding
-        )
-        self._buffer = None
-        return result
+    @property
+    def mgf(self) -> MGF:
+        return self._mgf
 
 
-PaddingContext.register(PKCS7PaddingContext)
+class MGF(metaclass=abc.ABCMeta):
+    _algorithm: hashes.HashAlgorithm
 
 
-class ANSIX923:
-    def __init__(self, block_size: int):
-        _byte_padding_check(block_size)
-        self.block_size = block_size
+class MGF1(MGF):
+    MAX_LENGTH = _MaxLength()
 
-    def padder(self) -> PaddingContext:
-        return _ANSIX923PaddingContext(self.block_size)
+    def __init__(self, algorithm: hashes.HashAlgorithm):
+        if not isinstance(algorithm, hashes.HashAlgorithm):
+            raise TypeError("Expected instance of hashes.HashAlgorithm.")
 
-    def unpadder(self) -> PaddingContext:
-        return _ANSIX923UnpaddingContext(self.block_size)
+        self._algorithm = algorithm
 
 
-class _ANSIX923PaddingContext(PaddingContext):
-    _buffer: bytes | None
-
-    def __init__(self, block_size: int):
-        self.block_size = block_size
-        # TODO: more copies than necessary, we should use zero-buffer (#193)
-        self._buffer = b""
-
-    def update(self, data: bytes) -> bytes:
-        self._buffer, result = _byte_padding_update(
-            self._buffer, data, self.block_size
-        )
-        return result
-
-    def _padding(self, size: int) -> bytes:
-        return bytes([0]) * (size - 1) + bytes([size])
-
-    def finalize(self) -> bytes:
-        result = _byte_padding_pad(
-            self._buffer, self.block_size, self._padding
-        )
-        self._buffer = None
-        return result
-
-
-class _ANSIX923UnpaddingContext(PaddingContext):
-    _buffer: bytes | None
-
-    def __init__(self, block_size: int):
-        self.block_size = block_size
-        # TODO: more copies than necessary, we should use zero-buffer (#193)
-        self._buffer = b""
-
-    def update(self, data: bytes) -> bytes:
-        self._buffer, result = _byte_unpadding_update(
-            self._buffer, data, self.block_size
-        )
-        return result
-
-    def finalize(self) -> bytes:
-        result = _byte_unpadding_check(
-            self._buffer,
-            self.block_size,
-            check_ansix923_padding,
-        )
-        self._buffer = None
-        return result
+def calculate_max_pss_salt_length(
+    key: rsa.RSAPrivateKey | rsa.RSAPublicKey,
+    hash_algorithm: hashes.HashAlgorithm,
+) -> int:
+    if not isinstance(key, (rsa.RSAPrivateKey, rsa.RSAPublicKey)):
+        raise TypeError("key must be an RSA public or private key")
+    # bit length - 1 per RFC 3447
+    emlen = (key.key_size + 6) // 8
+    salt_length = emlen - hash_algorithm.digest_size - 2
+    assert salt_length >= 0
+    return salt_length
